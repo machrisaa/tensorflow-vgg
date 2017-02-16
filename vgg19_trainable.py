@@ -11,6 +11,13 @@ VGG_MEAN = [103.939, 116.779, 123.68]
 class Vgg19:
     """
     A trainable version VGG19.
+
+    Args:
+    :vgg19_npy_path:    file path to a pre-trained .npy model file
+    :trainable:         specifies whether or not the network is being trained
+    :dropout:           see cs.toronto.edu/~hinton/absps/JMLRdropout.pdf
+    :num_classes:       number of labels for the output layer of the network
+                        Imagenet has 1000 classes
     """
 
     def __init__(self, vgg19_npy_path=None, trainable=True, dropout=0.5, num_classes=1000):
