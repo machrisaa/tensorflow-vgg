@@ -13,7 +13,7 @@ class Vgg19:
     A trainable version VGG19.
     """
 
-    def __init__(self, vgg19_npy_path=None, trainable=True):
+    def __init__(self, vgg19_npy_path=None, trainable=True, dropout=0.5):
         if vgg19_npy_path is not None:
             self.data_dict = np.load(vgg19_npy_path, encoding='latin1').item()
         else:
@@ -21,6 +21,7 @@ class Vgg19:
 
         self.var_dict = {}
         self.trainable = trainable
+        self.dropout = dropout
 
     def build(self, rgb, train_mode=None):
         """
@@ -73,16 +74,16 @@ class Vgg19:
         self.fc6 = self.fc_layer(self.pool5, 25088, 4096, "fc6")  # 25088 = ((224 / (2 ** 5)) ** 2) * 512
         self.relu6 = tf.nn.relu(self.fc6)
         if train_mode is not None:
-            self.relu6 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu6, 0.5), lambda: self.relu6)
+            self.relu6 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu6, self.dropout), lambda: self.relu6)
         elif self.trainable:
-            self.relu6 = tf.nn.dropout(self.relu6, 0.5)
+            self.relu6 = tf.nn.dropout(self.relu6, self.dropout)
 
         self.fc7 = self.fc_layer(self.relu6, 4096, 4096, "fc7")
         self.relu7 = tf.nn.relu(self.fc7)
         if train_mode is not None:
-            self.relu7 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu7, 0.5), lambda: self.relu7)
+            self.relu7 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu7, self.dropout), lambda: self.relu7)
         elif self.trainable:
-            self.relu7 = tf.nn.dropout(self.relu7, 0.5)
+            self.relu7 = tf.nn.dropout(self.relu7, self.dropout)
 
         self.fc8 = self.fc_layer(self.relu7, 4096, 1000, "fc8")
 
