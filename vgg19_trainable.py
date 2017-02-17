@@ -18,9 +18,11 @@ class Vgg19:
     :dropout:           see cs.toronto.edu/~hinton/absps/JMLRdropout.pdf
     :num_classes:       number of labels for the output layer of the network
                         Imagenet has 1000 classes
+    :l2_reg:            Regularization constant for modulating L2 loss
     """
 
-    def __init__(self, vgg19_npy_path=None, trainable=True, dropout=0.5, num_classes=1000):
+    def __init__(self, vgg19_npy_path=None, trainable=True,
+                 dropout=0.5, num_classes=1000, l2_reg=1e-5):
         if vgg19_npy_path is not None:
             self.data_dict = np.load(vgg19_npy_path, encoding='latin1').item()
         else:
@@ -30,13 +32,15 @@ class Vgg19:
         self.trainable = trainable
         self.dropout = dropout
         self.num_classes = num_classes
+        self.l2_reg = l2_reg
 
     def build(self, rgb, train_mode=None):
         """
         load variable from npy to build the VGG
 
-        :param rgb: rgb image [batch, height, width, 3] values scaled [0, 1]
-        :param train_mode: a bool tensor, usually a placeholder: if True, dropout will be turned on
+        :param rgb:         rgb image [batch,height,width,3] scaled to [0,1]
+        :param train_mode:  bool tensor (e.g. placeholder)
+                            if True, dropout will be turned on
         """
 
         rgb_scaled = rgb * 255.0
@@ -52,6 +56,9 @@ class Vgg19:
             red - VGG_MEAN[2],
         ])
         assert bgr.get_shape().as_list()[1:] == [224, 224, 3]
+
+        # Track the network's regularization loss
+        self.reg_loss = 0.0
 
         self.conv1_1 = self.conv_layer(bgr, 3, 64, "conv1_1")
         self.conv1_2 = self.conv_layer(self.conv1_1, 64, 64, "conv1_2")
@@ -79,39 +86,70 @@ class Vgg19:
         self.conv5_4 = self.conv_layer(self.conv5_3, 512, 512, "conv5_4")
         self.pool5 = self.max_pool(self.conv5_4, 'pool5')
 
-        self.fc6 = self.fc_layer(self.pool5, 25088, 4096, "fc6")  # 25088 = ((224 / (2 ** 5)) ** 2) * 512
+        # 25088 = ((224 / (2 ** 5)) ** 2) * 512
+        self.fc6 = self.fc_layer(self.pool5, 25088, 4096, "fc6")
         self.relu6 = tf.nn.relu(self.fc6)
         if train_mode is not None:
-            self.relu6 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu6, self.dropout), lambda: self.relu6)
+            self.relu6 = tf.cond(
+                train_mode,
+                lambda: tf.nn.dropout(self.relu6, self.dropout),
+                lambda: self.relu6
+            )
         elif self.trainable:
             self.relu6 = tf.nn.dropout(self.relu6, self.dropout)
 
         self.fc7 = self.fc_layer(self.relu6, 4096, 4096, "fc7")
         self.relu7 = tf.nn.relu(self.fc7)
         if train_mode is not None:
-            self.relu7 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu7, self.dropout), lambda: self.relu7)
+            self.relu7 = tf.cond(
+                train_mode,
+                lambda: tf.nn.dropout(self.relu7, self.dropout),
+                lambda: self.relu7
+            )
         elif self.trainable:
             self.relu7 = tf.nn.dropout(self.relu7, self.dropout)
 
-        self.fc8 = self.fc_layer(self.relu7, 4096, self.num_classes, "fc8")
-
+        if self.num_classes == 1000:
+            # default (ImageNet)
+            self.fc8 = self.fc_layer(self.relu7, 4096, self.num_classes, "fc8")
+        else:
+            # custom number of classes
+            self.fc8 = self.fc_layer(self.relu7, 4096, self.num_classes, "fc8n")
         self.prob = tf.nn.softmax(self.fc8, name="prob")
 
         self.data_dict = None
 
     def avg_pool(self, bottom, name):
-        return tf.nn.avg_pool(bottom, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name=name)
+        return tf.nn.avg_pool(
+            bottom,
+            ksize=[1, 2, 2, 1],
+            strides=[1, 2, 2, 1],
+            padding='SAME',
+            name=name
+        )
 
     def max_pool(self, bottom, name):
-        return tf.nn.max_pool(bottom, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name=name)
+        return tf.nn.max_pool(
+            bottom,
+            ksize=[1, 2, 2, 1],
+            strides=[1, 2, 2, 1],
+            padding='SAME',
+            name=name
+        )
 
     def conv_layer(self, bottom, in_channels, out_channels, name):
         with tf.variable_scope(name):
-            filt, conv_biases = self.get_conv_var(3, in_channels, out_channels, name)
+            filt, conv_biases = self.get_conv_var(
+                filter_size=3,
+                in_channels=in_channels,
+                out_channels=out_channels,
+                name=name
+            )
 
             conv = tf.nn.conv2d(bottom, filt, [1, 1, 1, 1], padding='SAME')
             bias = tf.nn.bias_add(conv, conv_biases)
             relu = tf.nn.relu(bias)
+            self.reg_loss += self.l2_reg * tf.nn.l2_loss(filt)
 
             return relu
 
@@ -121,11 +159,16 @@ class Vgg19:
 
             x = tf.reshape(bottom, [-1, in_size])
             fc = tf.nn.bias_add(tf.matmul(x, weights), biases)
+            self.reg_loss += self.l2_reg * tf.nn.l2_loss(weights)
 
             return fc
 
     def get_conv_var(self, filter_size, in_channels, out_channels, name):
-        initial_value = tf.truncated_normal([filter_size, filter_size, in_channels, out_channels], 0.0, 0.001)
+        initial_value = tf.truncated_normal(
+            [filter_size, filter_size, in_channels, out_channels],
+            0.0,
+            0.001
+        )
         filters = self.get_var(initial_value, name, 0, name + "_filters")
 
         initial_value = tf.truncated_normal([out_channels], .0, .001)
