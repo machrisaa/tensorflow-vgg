@@ -13,7 +13,7 @@ class Vgg19:
 
     def __init__(self, vgg19_npy_path=None, trainable=True, dropout=0.5):
         if vgg19_npy_path is not None:
-            self.data_dict = np.load(vgg19_npy_path, encoding='latin1').item()
+            self.data_dict = np.load(vgg19_npy_path, encoding='latin1', allow_pickle=True).item()
         else:
             self.data_dict = None
 
