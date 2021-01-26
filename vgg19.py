@@ -17,7 +17,7 @@ class Vgg19:
             vgg19_npy_path = path
             print(vgg19_npy_path)
 
-        self.data_dict = np.load(vgg19_npy_path, encoding='latin1').item()
+        self.data_dict = np.load(vgg19_npy_path, encoding='latin1', allow_pickle=True).item()
         print("npy file loaded")
 
     def build(self, rgb):
